@@ -1,0 +1,68 @@
+# Third-party images only; the tools' binaries and the certificates come from
+# bin/ and certs/ (see README.md). Network aliases give the containers the
+# host names the tools' READMEs use, so their configuration works unchanged.
+
+services:
+  glauth:
+    image: glauth/glauth:v2.3.2
+    command: ["/app/glauth", "-c", "/app/config/glauth.cfg"]
+    volumes:
+      - ./glauth/glauth.cfg:/app/config/glauth.cfg:ro
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.45.1
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    # Port 443 as Dex's own user: the issuer URL in the READMEs has no port.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+      - ./certs:/certs:ro
+    networks:
+      default:
+        aliases: [dex.example.com]
+    depends_on:
+      - glauth
+
+  squid:
+    image: ubuntu/squid:7.2-26.04_edge
+    # Docker's default nofile is huge; Squid sizes its fd table from it and
+    # fails to allocate it at start.
+    ulimits:
+      nofile: 65536
+    environment:
+      # The helper inherits it from Squid and trusts the lab CA through it.
+      SSL_CERT_FILE: /certs/ca.crt
+    volumes:
+      - ./squid/squid.conf:/etc/squid/squid.conf:ro
+      - ./certs:/certs:ro
+      - ./certs/server/squid.example.com.crt:/etc/squid/tls/server.crt:ro
+      - ./certs/server/squid.example.com.key:/etc/squid/tls/server.key:ro
+      - ./bin/squid-auth-oidc:/usr/local/libexec/squid-auth-oidc:ro
+    # Published so e2e.py can read the certificate Squid serves.
+    ports:
+      - "127.0.0.1:3129:3129"
+    networks:
+      default:
+        aliases: [squid.example.com]
+    depends_on:
+      - dex
+
+  target:
+    image: traefik/whoami:v1.12.0
+    networks:
+      default:
+        aliases: [app.internal.example.com, public.example.com]
+
+  tools:
+    image: curlimages/curl:8.17.0
+    command: ["tail", "-f", "/dev/null"]
+    # The lab CA stands in for a public one: the relay reads its trust store
+    # from SSL_CERT_FILE, curl from CURL_CA_BUNDLE for servers (e2e.py passes
+    # --proxy-cacert for Squid as an HTTPS proxy).
+    environment:
+      SSL_CERT_FILE: /certs/ca.crt
+      CURL_CA_BUNDLE: /certs/ca.crt
+    volumes:
+      - ./certs:/certs:ro
+      - ./bin/proxy-relay-oidc:/usr/local/bin/proxy-relay-oidc:ro

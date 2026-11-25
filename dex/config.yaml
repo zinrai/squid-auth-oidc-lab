@@ -1,0 +1,66 @@
+# Dex in front of glauth, which stands in for the organization's directory.
+# ID tokens live 2 minutes, so a check can outlast one and see the relay
+# refresh it.
+
+issuer: https://dex.example.com/dex
+
+storage:
+  type: memory
+
+web:
+  https: 0.0.0.0:443
+  tlsCert: /certs/server/dex.example.com.crt
+  tlsKey: /certs/server/dex.example.com.key
+
+expiry:
+  idTokens: 2m
+  refreshTokens:
+    validIfNotUsedFor: 24h
+
+oauth2:
+  skipApprovalScreen: true
+  passwordConnector: ldap
+  # password, not only authorization_code: e2e.py mints tokens for the helper
+  # checks without a browser. The relay itself uses the code flow with PKCE.
+  grantTypes:
+    - authorization_code
+    - refresh_token
+    - password
+
+staticClients:
+  - id: squid-relay
+    name: Squid relay
+    public: true
+    redirectURIs:
+      - http://127.0.0.1:8085/callback
+  # Only to mint tokens for the wrong audience.
+  - id: other-app
+    name: Another app
+    public: true
+    redirectURIs:
+      - http://127.0.0.1:8086/callback
+
+connectors:
+  - type: ldap
+    id: ldap
+    name: LDAP
+    config:
+      host: glauth:3893
+      insecureNoSSL: true
+      bindDN: cn=dex,ou=svcaccts,dc=glauth,dc=com
+      bindPW: dexbindsecret
+      userSearch:
+        baseDN: dc=glauth,dc=com
+        filter: "(objectClass=posixAccount)"
+        username: cn
+        idAttr: uidNumber
+        emailAttr: mail
+        nameAttr: cn
+        preferredUsernameAttr: cn
+      groupSearch:
+        baseDN: dc=glauth,dc=com
+        filter: "(objectClass=posixGroup)"
+        userMatchers:
+          - userAttr: uid
+            groupAttr: memberUid
+        nameAttr: cn
